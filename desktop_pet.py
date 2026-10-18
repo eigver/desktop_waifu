@@ -150,6 +150,7 @@ class PetPack:
         if not self.path.is_dir():
             raise ValueError(f"animation pack is not a directory: {self.path}")
         self.name = self.path.name
+        self.turn_duration = 0.0
         try:
             meta = json.loads((self.path / "pack.json").read_text(encoding="utf-8"))
             if isinstance(meta, dict) and meta.get("name"):
@@ -308,6 +309,11 @@ class ModelPack:
             self.ratio = min(1.5, max(0.25, float(meta.get("width_ratio", 0.66))))
         except (TypeError, ValueError):
             self.ratio = 0.66
+        facing = meta.get("facing", {})
+        try:
+            self.turn_duration = float(facing.get("turnDuration", 0.75))
+        except (TypeError, ValueError):
+            self.turn_duration = 0.75
         animations = meta.get("animations", {})
         self.animations = animations if isinstance(animations, dict) else {}
         interactions = meta.get("interactions", {})
@@ -451,7 +457,7 @@ class ViewerHTTPHandler(http.server.BaseHTTPRequestHandler):
             self._send(200, body, mime)
             return
             
-        # --- НОВЫЙ БЛОК: Раздача локальных библиотек из папки vendor ---
+        # --- Раздача локальных библиотек из папки vendor ---
         if path.startswith("/vendor/"):
             target = (APP_DIR / path.lstrip("/")).resolve()
             try:
@@ -534,6 +540,7 @@ class DesktopPet:
         self.jump_windup_until = 0.0
         self.pending_jump_vy = 0.0
         self.pending_jump_vx = 0.0
+        self.turn_windup_until = 0.0  # <--- Добавлено для синхронизации поворота
         self.pointer_button = 0
         self.speech = ""
         self.speech_until = 0.0
@@ -1237,28 +1244,38 @@ class DesktopPet:
                     self.vx = 0.0
                     self._set_state("idle")
                 else:
-                    self.vx = self.direction * self.speed
-                    self.x += self.vx * dt
-                    moved_horizontally = True
-                    if self.x < 0:
-                        self.x = 0
-                        self.direction = 1
-                    elif self.x + pet_w > self.screen_w:
-                        self.x = self.screen_w - pet_w
-                        self.direction = -1
-                    center = self.x + pet_w * 0.5
-                    if center < support["x1"] or center > support["x2"]:
-                        self.grounded = False
-                        self.support_id = ""
+                    if now < self.turn_windup_until:
+                        # Пауза перед поворотом: стоим на месте, пока JS разворачивает модель
+                        self.vx = 0.0
+                        self._set_state("walk")
                     else:
-                        self.y = support["top"] - pet_h
-                    self.jump_timer -= dt
-                    pack_behavior = getattr(self.pack, "meta", {}).get("behavior", {}) if getattr(self.pack, "is_3d", False) else {}
-                    auto_jump = not getattr(self.pack, "is_3d", False) or bool(pack_behavior.get("autoJump", False))
-                    if self.grounded and auto_jump and self.jump_timer <= 0 and random.random() < 0.02:
-                        self._jump()
-                    elif self.state != "land" or now >= self.land_until:
-                        self._set_state("walk" if self.grounded and self.vx else "idle")
+                        self.vx = self.direction * self.speed
+                        self.x += self.vx * dt
+                        moved_horizontally = True
+                        if self.x < 0:
+                            self.x = 0
+                            if self.direction == -1:
+                                self.direction = 1
+                                self.turn_windup_until = now + getattr(self.pack, "turn_duration", 0.0)
+                        elif self.x + pet_w > self.screen_w:
+                            self.x = self.screen_w - pet_w
+                            if self.direction == 1:
+                                self.direction = -1
+                                self.turn_windup_until = now + getattr(self.pack, "turn_duration", 0.0)
+                        
+                        center = self.x + pet_w * 0.5
+                        if center < support["x1"] or center > support["x2"]:
+                            self.grounded = False
+                            self.support_id = ""
+                        else:
+                            self.y = support["top"] - pet_h
+                        self.jump_timer -= dt
+                        pack_behavior = getattr(self.pack, "meta", {}).get("behavior", {}) if getattr(self.pack, "is_3d", False) else {}
+                        auto_jump = not getattr(self.pack, "is_3d", False) or bool(pack_behavior.get("autoJump", False))
+                        if self.grounded and auto_jump and self.jump_timer <= 0 and random.random() < 0.02:
+                            self._jump()
+                        elif self.state != "land" or now >= self.land_until:
+                            self._set_state("walk" if self.grounded and self.vx else "idle")
         if not self.grounded:
             old_bottom = self.y + pet_h
             self.vy += self.gravity * dt

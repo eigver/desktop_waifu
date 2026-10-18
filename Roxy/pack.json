@@ -8,16 +8,16 @@
   "facing": {
     "frontYawDegrees": 0.0,
     "sideYawDegrees": 90.0,
-    "turnDuration": 1.5
+    "turnDuration": 0.4
   },
   "animations": {
     "idle": "animations/idle.vrma",
     "walk_start": {
-      "file": "animations/female_walk_start.vrma",
+      "file": "animations/walking.vrma",
       "stripRootMotion": true
     },
     "walk": {
-      "file": "animations/Walking.vrma",
+      "file": "animations/walking.vrma",
       "stripRootMotion": true
     },
     "turn_left": "animations/left_turn.vrma",
