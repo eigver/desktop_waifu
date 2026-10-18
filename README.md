@@ -1,38 +1,132 @@
-# Desktop Pet for Arch Linux + Hyprland — v8
 
-This is a conservative rollback of the 3D animation loader to the supplied working code. It keeps later model-centering and Spring Bone scaling changes, continues to use CDN imports, and supports sizes up to 2000 px.
+# Desktop Pet для Hyprland (Wayland)
 
-## Update your existing source checkout
+Прозрачный интерактивный питомец для рабочего стола, написанный на Python с использованием GTK4 Layer Shell. Поддерживает как классические 2D-спрайты, так и полноценные 3D-модели формата VRM с физикой волос и одежды.
 
-Extract this archive over the existing source project, then run from that project's root:
+## Возможности
 
+- **2D и 3D паки:** Поддержка анимированных спрайтов (GIF/PNG/WebP) и 3D-моделей (.vrm, .glb).
+- **Интеграция с Hyprland:** Питомец взаимодействует с окнами (может стоять на них, падать с краев), прячется при открытии полноэкранных приложений и отслеживает активный рабочий стол.
+- **Умная физика:** Гравитация, прыжки, повороты в зависимости от направления движения, отслеживание курсора мыши (в 3D).
+- **Прозрачность и Click-through:** Питомец не перекрывает клики по другим окнам (используется маска ввода).
+- **Управление через сокет:** Настройка размера, скорости и загрузка паков на лету через консольную утилиту `petctl`.
+
+## Установка
+
+Скрипт установки рассчитан на **Arch Linux** (или производные с `pacman`).
+
+1. Установите зависимости:
+```bash
+sudo pacman -S --needed gtk4 gtk4-layer-shell python-gobject python-cairo python-pillow webkitgtk-6.0
+```
+*(`webkitgtk-6.0` необходим только если вы планируете использовать 3D-модели).*
+
+2. Запустите установщик:
 ```bash
 ./install.sh
-GDK_BACKEND=wayland ~/.local/bin/desktop-pet
 ```
+Скрипт скопирует файлы в `~/.local/share/desktop-pet` и создаст ярлыки в `~/.local/bin`.
 
-The installer stops the installed process before updating its files. It copies the source into `~/.local/share/desktop-pet` and does not delete your separately stored model pack.
-
-## Load Roxy and test an action
-
+3. Запустите питомца:
 ```bash
-~/.local/bin/petctl load /mnt/data/Downloads/desktop-pet-hyprland-v2/Roxy
-~/.local/bin/petctl resume
-~/.local/bin/petctl action twerk
-~/.local/bin/petctl status
+desktop-pet
 ```
 
-`petctl status` should report `Runtime: 8-stable-animation-core`. If it shows `6-hotfix` or `legacy build`, an older process/controller is still active. Run `~/.local/bin/petctl quit` and start the app again.
+## 🎮 Управление (`petctl`)
 
-## Size
+Взаимодействовать с питомцем можно прямо на экране:
+- **ЛКМ (Клик)** — Прыжок или кастомное действие (для 3D).
+- **ЛКМ (Зажать)** — Перетащить питомца.
+- **ПКМ** — Переключить на следующий пак.
+- **СКМ (Колесо)** — Поставить на паузу / продолжить.
 
+Управление из терминала:
 ```bash
-~/.local/bin/petctl size 800
-~/.local/bin/petctl size 2000
+petctl start                  # Запустить питомца
+petctl list                   # Список доступных паков
+petctl load /path/to/pack     # Загрузить конкретный пак
+petctl size 200               # Установить высоту (в пикселях)
+petctl speed 150              # Установить скорость ходьбы
+petctl pause / resume         # Пауза / Продолжить
+petctl hidefullscreen on/off  # Скрывать ли в полноэкранном режиме
+petctl quit                   # Закрыть питомца
 ```
 
-The maximum is 2000 pixels. A 2000 px avatar on a 1440 px tall monitor will extend beyond the visible screen.
+## Настройка 3D-моделей (pack.json)
 
-## Module loading
+Для 3D-моделей используется файл `pack.json`. Пример конфигурации:
+```json
+{
+  "type": "3d",
+  "name": "Roxy",
+  "model": "Roxy.vrm",
+  "facing": {
+    "frontYawDegrees": 0.0,
+    "sideYawDegrees": 90.0,
+    "turnDuration": 0.8
+  },
+  "groundOffsetPixels": 8,
+  "groundOffsetRatio": 0.02,
+  "animations": {
+    "idle": "animations/idle.vrma",
+    "walk": "animations/Walking.vrma"
+  }
+}
+```
 
-The viewer deliberately uses the known-working CDN import map. It does not try to mix a partial local `vendor/` install with remote modules. Internet access is required when WebKit loads the 3D viewer.
+- **`turnDuration`**: Длительность анимации поворота в секундах.
+- **`groundOffsetPixels` / `groundOffsetRatio`**: Поднимает или опускает модель, если она «уходит» ногами под экран или висит в воздухе.
+- **`sideYawDegrees`**: Угол поворота вбок (если модель ходит спиной вперед, используйте `-90`).
+
+## Известные проблемы и их решение
+
+### Физика одежды и волос (Clipping)
+Библиотека `three-vrm` использует пружинную физику (Spring Bones). Если волосы проходят сквозь руки, а юбка разрывается — проблема кроется в настройках самой модели.
+
+**Решение 1 (Программное):**
+В файле `viewer3d.html` внутри функции `bootModel()` можно подкрутить параметры жесткости. Найдите этот блок и настройте под себя:
+```javascript
+if (vrm && vrm.springBoneManager) {
+  const colliders = Array.from(vrm.springBoneManager.colliders || []);
+  colliders.forEach(c => { if (c.shape && c.shape.radius) c.shape.radius *= 0.8; }); // Уменьшить коллайдеры
+  vrm.springBoneManager.joints.forEach(j => {
+    j.settings.stiffness *= 1.2; 
+    j.settings.dragForce = Math.min(1.0, j.settings.dragForce + 0.1); // Добавить трение
+  });
+}
+```
+*Если плащ все еще рвется, можно полностью отключить физику для определенных костей (например, юбки), удалив их из `springBoneManager`.*
+
+**Решение 2 (Правильное, в 3D-редакторе):**
+Откройте модель в **Blender** с установленным плагином `VRM Add-on`:
+1. Настройте коллайдеры для рук, ног и тела (чтобы волосы отталкивались от них).
+2. Проверьте веса скиннинга (Weight Paint) для одежды, чтобы она не тянулась за руками.
+
+### Персонаж смотрит не туда / Резкие повороты
+Настройте параметры `frontYawDegrees` и `sideYawDegrees` в `pack.json`. Анимация поворота (`turnDuration`) теперь берется из конфига, что позволяет делать разворот плавным, а не мгновенным.
+
+## Структура пака
+
+**Для 2D:**
+```text
+my-pack/
+├── pack.json
+├── idle/ (001.png, 002.png...)
+├── walk/
+└── jump/
+```
+
+**Для 3D:**
+```text
+my-pack/
+├── pack.json
+├── model.vrm
+└── animations/
+    ├── idle.vrma
+    └── walk.vrma
+```
+
+
+Проект использует:
+- [Three.js](https://threejs.org/) и [three-vrm](https://github.com/pixiv/three-vrm) для рендеринга и физики 3D.
+- [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell) для интеграции в Wayland.
