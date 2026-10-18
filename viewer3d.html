@@ -254,8 +254,30 @@ try {
     vrm = modelGltf.userData?.vrm || null;
     modelRoot = vrm ? vrm.scene : modelGltf.scene;
     modelRoot.traverse(obj => { obj.frustumCulled = false; });
+
+    // --- НАЧАЛО ВСТАВКИ: Настройка физики одежды и волос ---
+    if (vrm && vrm.springBoneManager) {
+      // 1. Уменьшаем коллайдеры. В three-vrm есть баг, когда они раздуваются.
+      // 0.8 = уменьшить на 20%. Если волосы всё еще проходят сквозь руки, попробуйте 0.5.
+      const colliders = Array.from(vrm.springBoneManager.colliders || []);
+      colliders.forEach(collider => {
+        if (collider.shape && collider.shape.radius !== undefined) {
+          //collider.shape.radius *= 0.8; 
+        }
+      });
+
+      // 2. Делаем ткань/волосы жестче и добавляем сопротивление,
+      // чтобы они меньше болтались и не проваливались сквозь тело.
+      vrm.springBoneManager.joints.forEach(joint => {
+        //joint.settings.stiffness *= 1.5; // Жесткость (чем больше, тем меньше болтаются)
+        joint.settings.dragForce = Math.min(1.0, joint.settings.dragForce + 0.1); // Сопротивление среды
+      });
+    }
+    // --- КОНЕЦ ВСТАВКИ ---
+
     modelWrapper.add(modelRoot);
     const sourceBounds = new THREE.Box3().setFromObject(modelRoot);
+    // ... (дальше ваш код идет без изменений)
     const sourceHeight = Math.max(0.001, sourceBounds.max.y - sourceBounds.min.y);
     const metaScale = Number.isFinite(Number(manifest.scale)) ? Number(manifest.scale) : 1;
     modelRoot.position.y -= sourceBounds.min.y;
@@ -341,8 +363,7 @@ try {
     requestAnimationFrame(animate);
     const dt = Math.min(0.05, clock.getDelta());
     modelWrapper.position.y = 0;      // baseline
-    // + залогируйте bounding box после загрузки:
-    console.log("model bbox", new THREE.Box3().setFromObject(modelRoot));
+    
     if (mixer) mixer.update(dt);
     if (vrm) vrm.update(dt);
     if (turning) {
