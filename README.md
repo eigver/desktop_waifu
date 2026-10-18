@@ -1,4 +1,4 @@
-```markdown
+
 # Desktop Pet для Hyprland (Wayland)
 
 Прозрачный интерактивный питомец для рабочего стола, написанный на Python с использованием GTK4 Layer Shell. Поддерживает как классические 2D-спрайты, так и полноценные 3D-модели формата VRM с физикой волос и одежды.
@@ -126,8 +126,7 @@ my-pack/
     └── walk.vrma
 ```
 
-## Благодарности
+
 Проект использует:
 - [Three.js](https://threejs.org/) и [three-vrm](https://github.com/pixiv/three-vrm) для рендеринга и физики 3D.
 - [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell) для интеграции в Wayland.
-```
