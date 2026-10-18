@@ -709,6 +709,7 @@ class DesktopPet:
             view.set_hexpand(True)
             view.set_vexpand(True)
             view.set_focusable(False)
+            view.set_can_target(False)
             if hasattr(view, "set_background_color"):
                 transparent = Gdk.RGBA()
                 transparent.parse("rgba(0,0,0,0)")

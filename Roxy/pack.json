@@ -30,7 +30,15 @@
       "file": "animations/jump.vrma",
       "stripRootMotion": true
     },
-    "twerk": "animations/twerk.vrma"
+    "twerk": {
+      "file": "animations/twerk.vrma",
+      "stripRootMotion": true,
+      "rotationY": 180
+      
+    }
+  },
+    "interactions": {
+    "click": "twerk"
   },
   "groundOffsetPixels": 0,
   "groundOffsetRatio": -0.023,
