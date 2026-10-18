@@ -92,27 +92,23 @@ try {
     return front;
   }
   function makeTrackSafe(clip, key, options = {}) {
-    const defaultRootMotion = ['jump', 'fall', 'land'].includes(key);
-    const stripRootMotion = options.stripRootMotion ?? defaultRootMotion;
-    // Больше не вырезаем вращение корневой кости (turn_left/turn_right) — это ломало повороты
-    const stripRootRotation = false; 
-    if (!stripRootMotion && !stripRootRotation) return clip;
-    const tracks = clip.tracks.filter(track => {
-        const name = String(track.name || '').toLowerCase().replace(/[\[\]]/g, '');
-        const isPosition = /(?:\.position|\.translation|\.position\[)/.test(name);
-        const isRotation = /(?:\.quaternion|\.rotation|\.quaternion\[)/.test(name);
-        const isRoot = /(hips|hip|pelvis|root|armature|skeleton|scene)/.test(name);
-        // Удаляем ТОЛЬКО смещение (position) корневой кости, чтобы физика Python управляла движением
-        if (isRoot && isPosition && stripRootMotion) {
-            return false;
-        }
-        // Вращение (quaternion/rotation) оставляем — оно отвечает за анимацию поворота и позы
-        return true;
-    });
-    // Если после фильтрации не осталось треков, возвращаем оригинал, чтобы не было T-позы
-    if (tracks.length === 0) return clip;
-    return new THREE.AnimationClip(clip.name, clip.duration, tracks);
-  }
+  const defaultRootMotion = ['jump', 'fall', 'land'].includes(key);
+  const defaultRootRotation = ['turn_left', 'turn_right'].includes(key);
+  const stripRootMotion = options.stripRootMotion ?? defaultRootMotion;
+  const stripRootRotation = options.stripRootRotation ?? defaultRootRotation;
+  if (!stripRootMotion && !stripRootRotation) return clip;
+  const tracks = clip.tracks.filter(track => {
+    const name = String(track.name || '').toLowerCase().replace(/[\[\]]/g, '');
+    const isPosition = /(?:\.position|\.translation|\.position\[)/.test(name);
+    const isRotation = /(?:\.quaternion|\.rotation|\.quaternion\[)/.test(name);
+    const isRoot = /(hips|hip|pelvis|root|armature|skeleton|scene)/.test(name);
+    if (isRoot && isPosition && stripRootMotion) return false;
+    if (isRoot && isRotation && stripRootRotation) return false;
+    return true;
+  });
+  if (tracks.length === 0) return clip;
+  return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
   function applyState(nextState, force = false) {
     if (!mixer || (!force && nextState === currentSemanticState)) return;
     const clip = clips.get(nextState) || clips.get('idle') || null;
@@ -188,7 +184,9 @@ try {
     const cfg = facingConfig();
     const configuredDuration = Number(cfg.turnDuration);
     const duration = Math.max(0.12, Math.min(2.5,
-      clip?.duration || (Number.isFinite(configuredDuration) && configuredDuration > 0 ? configuredDuration : 0.42)));
+    (Number.isFinite(configuredDuration) && configuredDuration > 0)
+      ? configuredDuration
+      : (clip?.duration || 0.42)));
     turning = {
       startYaw, delta, targetYaw, targetFacing, targetState, walkStart,
       elapsed: 0, duration, animationKey: clip ? key : ''
@@ -266,7 +264,8 @@ try {
     mixer = new THREE.AnimationMixer(modelRoot);
     mixer.addEventListener('finished', event => {
       if (event.action !== currentAction) return;
-      if (currentSemanticState === '__turn__') { finishTurn(); return; }
+      if (currentSemanticState === '__turn__') { //finishTurn(); 
+        return; }
       if (currentSemanticState === 'walk_start') {
         if (lastPhysicsState === 'walk') applyState('walk', true);
         else applyState(lastPhysicsState || 'idle', true);
@@ -341,6 +340,9 @@ try {
   function animate() {
     requestAnimationFrame(animate);
     const dt = Math.min(0.05, clock.getDelta());
+    modelWrapper.position.y = 0;      // baseline
+    // + залогируйте bounding box после загрузки:
+    console.log("model bbox", new THREE.Box3().setFromObject(modelRoot));
     if (mixer) mixer.update(dt);
     if (vrm) vrm.update(dt);
     if (turning) {
@@ -350,11 +352,15 @@ try {
       modelWrapper.rotation.y = turning.startYaw + turning.delta * eased;
       if (t >= 1) finishTurn();
     }
+    const groundOffsetPx = Number(manifest.groundOffsetPixels) || 0;
+    const groundOffsetRatio = Number(manifest.groundOffsetRatio) || 0;  
+    const groundOffset = groundOffsetPx + state.screenH * groundOffsetRatio;
     // Keep motion smooth between Python/Hyprland position updates.
     const currentX = anchor.position.x;
     const currentY = anchor.position.y;
-    const targetX = wantedX + state.w / 2 - state.screenW / 2;
-    const targetY = state.screenH / 2 - (wantedY + state.h);
+    const dpr = window.devicePixelRatio || 1;
+    const targetX = (wantedX + state.w / 2) / dpr - window.innerWidth / 2;
+    const targetY = window.innerHeight / 2 - (wantedY + state.h + groundOffset) / dpr;
     anchor.position.x = currentX + (targetX - currentX) * Math.min(1, dt * 18);
     anchor.position.y = currentY + (targetY - currentY) * Math.min(1, dt * 18);
     if (modelWrapper.userData.baseScale) modelWrapper.scale.setScalar(modelWrapper.userData.baseScale * state.h);

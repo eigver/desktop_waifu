@@ -32,8 +32,8 @@
     },
     "twerk": "animations/twerk.vrma"
   },
-  "groundOffsetPixels": 200,
-  "groundOffsetRatio": 0.06,
+  "groundOffsetPixels": 0,
+  "groundOffsetRatio": -0.023,
   "pointerLookAt": true,
   "behavior": {
     "autoJump": false
