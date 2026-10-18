@@ -1,0 +1,41 @@
+{
+  "format": 2,
+  "type": "3d",
+  "name": "Roxy",
+  "model": "Roxy.vrm",
+  "scale": 1,
+  "width_ratio": 0.4,
+  "facing": {
+    "frontYawDegrees": 0.0,
+    "sideYawDegrees": 90.0,
+    "turnDuration": 1.5
+  },
+  "animations": {
+    "idle": "animations/idle.vrma",
+    "walk_start": {
+      "file": "animations/female_walk_start.vrma",
+      "stripRootMotion": true
+    },
+    "walk": {
+      "file": "animations/Walking.vrma",
+      "stripRootMotion": true
+    },
+    "turn_left": "animations/left_turn.vrma",
+    "turn_right": "animations/right_turn.vrma",
+    "fall": {
+      "file": "animations/falling.vrma",
+      "stripRootMotion": true
+    },
+    "jump": {
+      "file": "animations/jump.vrma",
+      "stripRootMotion": true
+    },
+    "twerk": "animations/twerk.vrma"
+  },
+  "groundOffsetPixels": 200,
+  "groundOffsetRatio": 0.06,
+  "pointerLookAt": true,
+  "behavior": {
+    "autoJump": false
+  }
+}

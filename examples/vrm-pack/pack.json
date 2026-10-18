@@ -1,0 +1,31 @@
+{
+  "format": 2,
+  "type": "3d",
+  "name": "My VRM Character",
+  "model": "character.vrm",
+  "scale": 1.0,
+  "width_ratio": 0.66,
+  "facing": {
+    "frontYawDegrees": 0,
+    "sideYawDegrees": 90,
+    "turnDuration": 0.55
+  },
+  "animations": {
+    "idle": "animations/idle.vrma",
+    "walk_start": {
+      "file": "animations/female_walk_start.vrma",
+      "stripRootMotion": true
+    },
+    "walk": {
+      "file": "animations/Walking.vrma",
+      "stripRootMotion": true
+    },
+    "turn_left": "animations/left_turn.vrma",
+    "turn_right": "animations/right_turn.vrma",
+    "jump": {
+      "file": "animations/jump.vrma",
+      "stripRootMotion": true
+    }
+  },
+  "groundOffsetRatio": 0.06
+}

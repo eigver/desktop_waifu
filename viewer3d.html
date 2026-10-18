@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Desktop Pet 3D</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { width:100%; height:100%; margin:0; overflow:hidden; background:transparent !important; }
+  body { font: 13px sans-serif; user-select:none; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; background:transparent; }
+  #status { position:fixed; top:16px; left:16px; max-width:460px; padding:9px 12px; color:#f4f4f5;
+    background:rgba(22,24,32,.90); border:1px solid rgba(255,255,255,.14); border-radius:9px;
+    box-shadow:0 5px 22px rgba(0,0,0,.2); pointer-events:none; white-space:pre-wrap; }
+  #status.hidden { display:none; }
+  #shadow { position:fixed; width:52px; height:11px; border-radius:50%; pointer-events:none;
+    background:radial-gradient(ellipse, rgba(0,0,0,.25), rgba(0,0,0,0) 72%); transform:translate(-50%,-50%); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3/lib/three-vrm.module.min.js",
+    "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3/lib/three-vrm-animation.module.min.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="shadow"></div><div id="status">Starting 3D renderer…</div>
+<script type="module">
+const statusNode = document.getElementById('status');
+const shadowNode = document.getElementById('shadow');
+const showStatus = (msg, keep = false) => { statusNode.textContent = msg; statusNode.classList.remove('hidden'); if (!keep) setTimeout(() => statusNode.classList.add('hidden'), 3200); };
+const encodePath = p => String(p || '').split('/').map(encodeURIComponent).join('/');
+try {
+  // Dynamic imports keep a useful on-screen error if the first-run CDN download fails.
+  const THREE = await import('three');
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const { VRMLoaderPlugin } = await import('@pixiv/three-vrm');
+  const { VRMAnimationLoaderPlugin, createVRMAnimationClip } = await import('@pixiv/three-vrm-animation');
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.setClearColor(0x000000, 0);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.domElement.setAttribute('aria-label', 'Transparent 3D desktop pet');
+  document.body.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.OrthographicCamera(-window.innerWidth / 2, window.innerWidth / 2,
+    window.innerHeight / 2, -window.innerHeight / 2, 0.1, 20000);
+  camera.position.set(0, 0, 10000);
+  camera.lookAt(0, 0, 0);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x9ca3af, 2.1));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
+  keyLight.position.set(-3, 6, 8); scene.add(keyLight);
+  const fillLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  fillLight.position.set(5, 2, 4); scene.add(fillLight);
+  const anchor = new THREE.Group(); scene.add(anchor);
+  const modelWrapper = new THREE.Group(); anchor.add(modelWrapper);
+  const lookTarget = new THREE.Object3D(); lookTarget.position.set(0, 0, 500); scene.add(lookTarget);
+  const loader = new GLTFLoader();
+  loader.register(parser => new VRMLoaderPlugin(parser));
+  loader.register(parser => new VRMAnimationLoaderPlugin(parser));
+  let manifest = {};
+  let modelGltf = null;
+  let modelRoot = null;
+  let vrm = null;
+  let mixer = null;
+  let currentAction = null;
+  let currentSemanticState = '';
+  let lastInteractionSeq = -1;
+  let lastPhysicsState = null;
+  let lastPhysicsDirection = null;
+  let currentFacing = 'front';
+  let turning = null;
+  let interactionPlaying = false;
+  let state = { x: 300, y: 300, w: 90, h: 140, screenW: innerWidth, screenH: innerHeight, direction: 1, state: 'idle' };
+  let wantedX = state.x, wantedY = state.y;
+  const clips = new Map();
+  const clock = new THREE.Clock();
+  const facingConfig = () => manifest.facing && typeof manifest.facing === 'object' ? manifest.facing : {};
+  const degrees = n => Number(n || 0) * Math.PI / 180;
+  const wrapAngle = n => Math.atan2(Math.sin(n), Math.cos(n));
+  function facingYaw(mode) {
+    const cfg = facingConfig();
+    const front = degrees(Number.isFinite(Number(cfg.frontYawDegrees)) ? Number(cfg.frontYawDegrees) : 0);
+    const side = degrees(Number.isFinite(Number(cfg.sideYawDegrees)) ? Number(cfg.sideYawDegrees) : 90);
+    if (mode === 'right') return front + side;
+    if (mode === 'left') return front - side;
+    return front;
+  }
+  function makeTrackSafe(clip, key, options = {}) {
+    const defaultRootMotion = ['jump', 'fall', 'land'].includes(key);
+    const stripRootMotion = options.stripRootMotion ?? defaultRootMotion;
+    // Больше не вырезаем вращение корневой кости (turn_left/turn_right) — это ломало повороты
+    const stripRootRotation = false; 
+    if (!stripRootMotion && !stripRootRotation) return clip;
+    const tracks = clip.tracks.filter(track => {
+        const name = String(track.name || '').toLowerCase().replace(/[\[\]]/g, '');
+        const isPosition = /(?:\.position|\.translation|\.position\[)/.test(name);
+        const isRotation = /(?:\.quaternion|\.rotation|\.quaternion\[)/.test(name);
+        const isRoot = /(hips|hip|pelvis|root|armature|skeleton|scene)/.test(name);
+        // Удаляем ТОЛЬКО смещение (position) корневой кости, чтобы физика Python управляла движением
+        if (isRoot && isPosition && stripRootMotion) {
+            return false;
+        }
+        // Вращение (quaternion/rotation) оставляем — оно отвечает за анимацию поворота и позы
+        return true;
+    });
+    // Если после фильтрации не осталось треков, возвращаем оригинал, чтобы не было T-позы
+    if (tracks.length === 0) return clip;
+    return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+  }
+  function applyState(nextState, force = false) {
+    if (!mixer || (!force && nextState === currentSemanticState)) return;
+    const clip = clips.get(nextState) || clips.get('idle') || null;
+    if (!clip) {
+      if (currentAction) currentAction.stop();
+      currentAction = null;
+      currentSemanticState = nextState;
+      return;
+    }
+    if (currentAction) currentAction.fadeOut(0.12);
+    const action = mixer.clipAction(clip);
+    const oneShot = ['jump', 'land', 'walk_start'].includes(nextState);
+    action.reset(); action.enabled = true;
+    action.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, oneShot ? 1 : Infinity);
+    action.clampWhenFinished = oneShot;
+    action.fadeIn(0.12).play();
+    currentAction = action;
+    currentSemanticState = nextState;
+    interactionPlaying = false;
+  }
+  function playOneShot(key, semantic = key) {
+    if (!mixer) return false;
+    const clip = clips.get(key);
+    if (!clip) return false;
+    if (currentAction) currentAction.fadeOut(0.08);
+    const action = mixer.clipAction(clip);
+    action.reset(); action.enabled = true;
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.fadeIn(0.10).play();
+    currentAction = action;
+    currentSemanticState = semantic;
+    return true;
+  }
+  async function loadAnimationSpec(key, spec) {
+    const options = typeof spec === 'object' && spec !== null ? spec : { file: spec };
+    const source = options.file || options.name || '';
+    if (typeof source !== 'string' || !source) return;
+    const looksLikeFile = /\.(vrma|glb|gltf)$/i.test(source);
+    let clip = null;
+    if (!looksLikeFile) {
+      clip = (modelGltf?.animations || []).find(c => c.name === source || c.name.toLowerCase() === source.toLowerCase()) || null;
+      if (!clip) {
+        console.warn(`Animation '${source}' was not found in the model; state '${key}' will use idle/fallback motion.`);
+        return;
+      }
+    } else {
+      const animationGltf = await loader.loadAsync('/packfiles/' + encodePath(source));
+      const vrmAnimations = animationGltf.userData?.vrmAnimations || [];
+      if (vrm && vrmAnimations.length) clip = createVRMAnimationClip(vrmAnimations[0], vrm);
+      if (!clip && animationGltf.animations?.length) clip = animationGltf.animations[0];
+      if (!clip) {
+        console.warn(`No compatible animation found in ${source}`);
+        return;
+      }
+    }
+    clips.set(key, makeTrackSafe(clip, key, options));
+  }
+  function startTurn(targetFacing, targetState, walkStart = false) {
+    const targetYaw = facingYaw(targetFacing);
+    const startYaw = modelWrapper.rotation.y;
+    const delta = wrapAngle(targetYaw - startYaw);
+    if (Math.abs(delta) < 0.025) {
+      modelWrapper.rotation.y = targetYaw;
+      currentFacing = targetFacing;
+      turning = null;
+      continueAfterTurn(targetState, walkStart);
+      return;
+    }
+    if (currentAction) currentAction.fadeOut(0.08);
+    const key = delta > 0 ? 'turn_right' : 'turn_left';
+    const clip = clips.get(key);
+    const cfg = facingConfig();
+    const configuredDuration = Number(cfg.turnDuration);
+    const duration = Math.max(0.12, Math.min(2.5,
+      clip?.duration || (Number.isFinite(configuredDuration) && configuredDuration > 0 ? configuredDuration : 0.42)));
+    turning = {
+      startYaw, delta, targetYaw, targetFacing, targetState, walkStart,
+      elapsed: 0, duration, animationKey: clip ? key : ''
+    };
+    interactionPlaying = false;
+    if (clip) playOneShot(key, '__turn__');
+    else currentSemanticState = '__turn_no_clip__';
+  }
+  function continueAfterTurn(targetState, walkStart) {
+    if (targetState === 'walk' && walkStart && lastPhysicsState === 'walk' && clips.has('walk_start')) {
+      playOneShot('walk_start', 'walk_start');
+    } else {
+      applyState(lastPhysicsState || targetState || 'idle', true);
+    }
+  }
+  function finishTurn() {
+    if (!turning) return;
+    const completed = turning;
+    modelWrapper.rotation.y = completed.targetYaw;
+    currentFacing = completed.targetFacing;
+    turning = null;
+    continueAfterTurn(completed.targetState, completed.walkStart);
+  }
+  function handlePhysicsUpdate(next) {
+    const previousState = lastPhysicsState;
+    const previousDirection = lastPhysicsDirection;
+    const changedState = next.state !== previousState;
+    const changedDirection = next.direction !== previousDirection;
+    lastPhysicsState = next.state;
+    lastPhysicsDirection = next.direction;
+    if (previousState === null) {
+      currentFacing = 'front';
+      modelWrapper.rotation.y = facingYaw('front');
+      applyState(next.state || 'idle', true);
+      return;
+    }
+    if (!changedState && !changedDirection) return;
+    if (interactionPlaying) return;
+    let targetFacing = currentFacing;
+    if (next.state === 'walk') targetFacing = next.direction >= 0 ? 'right' : 'left';
+    else if (next.state === 'idle' || next.state === 'sleep') targetFacing = 'front';
+    const needsTurn = (next.state === 'walk' && targetFacing !== currentFacing) ||
+      ((next.state === 'idle' || next.state === 'sleep') && currentFacing !== 'front');
+    if (needsTurn) {
+      const walkStart = next.state === 'walk' && previousState === 'idle';
+      if (turning && turning.targetFacing === targetFacing) {
+        turning.targetState = next.state;
+        turning.walkStart = turning.walkStart || walkStart;
+      } else {
+        startTurn(targetFacing, next.state, walkStart);
+      }
+      return;
+    }
+    if (turning) {
+      turning.targetState = next.state;
+      return;
+    }
+    applyState(next.state || 'idle');
+  }
+  async function bootModel() {
+    manifest = await (await fetch('/pack.json', { cache: 'no-store' })).json();
+    const modelUrl = '/packfiles/' + encodePath(manifest.model);
+    showStatus(`Loading ${manifest.name || manifest.model}…`, true);
+    modelGltf = await loader.loadAsync(modelUrl);
+    vrm = modelGltf.userData?.vrm || null;
+    modelRoot = vrm ? vrm.scene : modelGltf.scene;
+    modelRoot.traverse(obj => { obj.frustumCulled = false; });
+    modelWrapper.add(modelRoot);
+    const sourceBounds = new THREE.Box3().setFromObject(modelRoot);
+    const sourceHeight = Math.max(0.001, sourceBounds.max.y - sourceBounds.min.y);
+    const metaScale = Number.isFinite(Number(manifest.scale)) ? Number(manifest.scale) : 1;
+    modelRoot.position.y -= sourceBounds.min.y;
+    modelWrapper.userData.baseScale = Math.max(0.1, Math.min(5, metaScale)) / sourceHeight;
+    modelWrapper.scale.setScalar(modelWrapper.userData.baseScale * (state.h || 112));
+    mixer = new THREE.AnimationMixer(modelRoot);
+    mixer.addEventListener('finished', event => {
+      if (event.action !== currentAction) return;
+      if (currentSemanticState === '__turn__') { finishTurn(); return; }
+      if (currentSemanticState === 'walk_start') {
+        if (lastPhysicsState === 'walk') applyState('walk', true);
+        else applyState(lastPhysicsState || 'idle', true);
+        return;
+      }
+      if (currentSemanticState === 'jump' && lastPhysicsState === 'jump') {
+        // Physics already moves the entire model vertically. Do not loop the jump clip.
+        applyState('fall', true);
+        return;
+      }
+      if (currentSemanticState.startsWith('__interaction:')) {
+        interactionPlaying = false;
+        applyState(lastPhysicsState || 'idle', true);
+      }
+    });
+    modelWrapper.rotation.y = facingYaw('front');
+    const specs = manifest.animations && typeof manifest.animations === 'object' ? manifest.animations : {};
+    for (const [key, spec] of Object.entries(specs)) {
+      try { await loadAnimationSpec(key, spec); }
+      catch (err) { console.error('Could not load animation', key, err); showStatus(`Animation '${key}' failed to load. Check pack.json and the file path.`); }
+    }
+    currentFacing = 'front';
+    modelWrapper.rotation.y = facingYaw('front');
+    lastPhysicsState = null;
+    lastPhysicsDirection = null;
+    applyState('idle', true);
+    showStatus(`${manifest.name || '3D pet'} loaded. Click it to trigger its configured interaction.`);
+  }
+  function playInteraction(eventName) {
+    if (!mixer) return;
+    let actionName = eventName;
+    if (eventName.startsWith('action:')) actionName = eventName.slice('action:'.length);
+    else actionName = manifest.interactions?.[eventName] || '';
+    if (!actionName) return;
+    const clip = clips.get(actionName);
+    if (!clip) { showStatus(`No animation '${actionName}' loaded. Add it to pack.json → animations.`); return; }
+    if (currentAction) currentAction.fadeOut(0.08);
+    const action = mixer.clipAction(clip);
+    action.reset(); action.enabled = true; action.setLoop(THREE.LoopOnce, 1); action.clampWhenFinished = true;
+    action.fadeIn(0.10).play(); currentAction = action;
+    currentSemanticState = '__interaction:' + actionName;
+    interactionPlaying = true;
+  }
+  async function pollState() {
+    try {
+      const next = await (await fetch('/state', { cache: 'no-store' })).json();
+      state = next;
+      wantedX = next.x; wantedY = next.y;
+      anchor.visible = !next.hidden;
+      handlePhysicsUpdate(next);
+      if (next.interactionSeq !== lastInteractionSeq) {
+        lastInteractionSeq = next.interactionSeq;
+        if (next.interaction) playInteraction(next.interaction);
+      }
+      if (vrm?.lookAt && next.pointerActive) {
+        lookTarget.position.set(next.pointerX - next.screenW / 2, next.screenH / 2 - next.pointerY, 450);
+        try { vrm.lookAt.target = lookTarget; } catch (_) {}
+      }
+      shadowNode.style.display = next.hidden ? 'none' : 'block';
+    } catch (err) { console.debug('state poll', err); }
+    setTimeout(pollState, 45);
+  }
+  function resize() {
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+    camera.left = -window.innerWidth / 2; camera.right = window.innerWidth / 2;
+    camera.top = window.innerHeight / 2; camera.bottom = -window.innerHeight / 2;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  await bootModel();
+  pollState();
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(0.05, clock.getDelta());
+    if (mixer) mixer.update(dt);
+    if (vrm) vrm.update(dt);
+    if (turning) {
+      turning.elapsed += dt;
+      const t = Math.min(1, turning.elapsed / turning.duration);
+      const eased = t * t * (3 - 2 * t);
+      modelWrapper.rotation.y = turning.startYaw + turning.delta * eased;
+      if (t >= 1) finishTurn();
+    }
+    // Keep motion smooth between Python/Hyprland position updates.
+    const currentX = anchor.position.x;
+    const currentY = anchor.position.y;
+    const targetX = wantedX + state.w / 2 - state.screenW / 2;
+    const targetY = state.screenH / 2 - (wantedY + state.h);
+    anchor.position.x = currentX + (targetX - currentX) * Math.min(1, dt * 18);
+    anchor.position.y = currentY + (targetY - currentY) * Math.min(1, dt * 18);
+    if (modelWrapper.userData.baseScale) modelWrapper.scale.setScalar(modelWrapper.userData.baseScale * state.h);
+    shadowNode.style.left = `${wantedX + state.w / 2}px`;
+    shadowNode.style.top = `${wantedY + state.h - 3}px`;
+    shadowNode.style.width = `${Math.max(32, state.w * 0.68)}px`;
+    renderer.render(scene, camera);
+  }
+  animate();
+} catch (err) {
+  console.error(err);
+  showStatus('3D viewer could not start. Check internet access for the Three.js modules, install webkitgtk-6.0, then retry.\n\n' + String(err?.message || err), true);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# === Виртуальные окружения ===
+venv/
+.venv/
+env/
+ENV/
+.python-version
+
+# === Тесты / кеш инструментов ===
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# === Секреты и локальный конфиг ===
+.env
+.env.*
+!.env.example
+*.local
+config.local.*
+pet_config.json
+*.log
+
+# === Редакторы / IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === ОС ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Временные файлы ===
+*.tmp
+*.bak
+*.orig
+*.rej
